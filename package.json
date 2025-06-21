@@ -1,15 +1,15 @@
 {
   "name": "jcrawler",
-  "version": "1.0.0",
-  "main": "index.js",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "devDependencies": {
-    "three": "^0.177.0"
+    "typescript": "~5.8.3",
+    "vite": "^6.3.5"
   }
 }
