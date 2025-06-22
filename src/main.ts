@@ -23,19 +23,10 @@ function showPopup(message: string, duration: number = 3000) {
   }
 }
 
-import { setupRoom, RuinSetupContext } from './game/aethelburg_ruins/ruinUtils'; // Import new functions
+import { setupRoom } from './game/aethelburg_ruins/ruinUtils'; // Import new functions
+import type { RuinSetupContext } from './game/aethelburg_ruins/ruinUtils';
 
-// Helper functions for UI (showPopup, updateGoldDisplay) - remain in main.ts for now or move to a UI manager
-function showPopup(message: string, duration: number = 3000) {
-  if (popupElement) {
-    popupElement.textContent = message;
-    popupElement.classList.remove('hidden');
-    setTimeout(() => {
-      popupElement.classList.add('hidden');
-    }, duration);
-  }
-}
-
+// Helper functions for UI (updateGoldDisplay) - remain in main.ts for now or move to a UI manager
 function updateGoldDisplay() {
   if (goldDisplayElement) {
     goldDisplayElement.textContent = `Gold: ${playerGold}`;
@@ -75,6 +66,7 @@ scene.add(torchLight); // Add to scene so it can be parented
 const roomSize = { width: 10, height: 3, depth: 10 };
 
 // Dynamic Game Objects - these will be managed by setupRoom via the context
+// These will be initialized by setupRoom
 let chest: THREE.Mesh | undefined;
 let skeleton: THREE.Mesh | undefined;
 let door: THREE.Mesh | undefined;
@@ -167,22 +159,8 @@ scene.add(torchModel);
 torchLight.position.set(0, 0, 0);
 torchModel.add(torchLight);
 
-
-// Treasury Chest, Skeleton, Door - will be initialized in setupRoom
-let chest: THREE.Mesh;
-let skeleton: THREE.Mesh;
-let door: THREE.Mesh;
-
-// Default geometries and materials (can be reused or customized per object type)
-const defaultChestGeometry = new THREE.BoxGeometry(0.8, 0.5, 0.5);
-const defaultChestMaterial = new THREE.MeshStandardMaterial({ color: 0x8B4513 }); // SaddleBrown
-
-const defaultSkeletonGeometry = new THREE.CapsuleGeometry(0.3, 1.0, 4, 8);
-const defaultSkeletonMaterial = new THREE.MeshStandardMaterial({ color: 0xe0e0e0 });
-
-const defaultDoorGeometry = new THREE.BoxGeometry(1, 2, 0.1); // Width, height, depth
-const defaultDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x654321 }); // Brown color for door
-
+// Default geometries and materials are now primarily managed in ruinUtils.ts
+// chest, skeleton, and door are declared earlier and will be initialized by setupRoom
 
 // Pointer Lock Controls
 const controls = new PointerLockControls(camera, renderer.domElement);
@@ -256,8 +234,12 @@ document.addEventListener('keydown', (event) => {
         showPopup("The skeleton has nothing more of interest.", 2000);
       } else if (highlightedObject === door) { // Door interaction
         showPopup("Moving to a new area...", 1500);
-        // Call setupRoom which internally calls clearRoomObjects
-        setupRoom(false);
+        
+        // Store the current highlighted door to remove its highlight
+        const previouslyHighlightedDoor = highlightedObject;
+
+        // Call initializeRoom which internally calls setupRoom
+        initializeRoom(false);
 
         // Reposition Player
         camera.position.set(0, 1.6, roomSize.depth / 2 - 1.5); // Place just inside new "front" door area
@@ -399,8 +381,9 @@ function updateGazeHighlighting() {
   }
 
   raycaster.setFromCamera(gazePoint, camera);
-  const highlightableSceneObjects = [chest, skeleton, door]; // Ensure these are the actual Mesh objects
-  const intersects = raycaster.intersectObjects(highlightableSceneObjects, false);
+  // Ensure highlightableSceneObjects are valid and not undefined before intersecting
+  const validHighlightableObjects = highlightableSceneObjects.filter(obj => obj !== undefined) as THREE.Mesh[];
+  const intersects = raycaster.intersectObjects(validHighlightableObjects, false);
 
   let newTarget: THREE.Mesh | null = null;
 
@@ -448,8 +431,124 @@ function updateGazeHighlighting() {
   // If newTarget is null and highlightedObject was also null, no change.
 }
 
-// Initial Room Setup
-setupRoom(true); // Generate the first room
+// Initial Room Setup & Context
+// Create a context object to pass to setupRoom
+// This allows setupRoom to modify these values directly or signal main.ts to update them.
+// For highlightableSceneObjects, we pass the array itself so setupRoom can clear/repopulate it.
+let ruinContext: RuinSetupContext = {
+    scene,
+    roomSize,
+    chest: undefined, // Will be assigned by setupRoom and then to global 'chest'
+    skeleton: undefined, // Will be assigned by setupRoom and then to global 'skeleton'
+    door: undefined, // Will be assigned by setupRoom and then to global 'door'
+    highlightableSceneObjects: [], // Initialize and pass this array
+    highlightedObject: null, // Will be managed by main.ts gaze logic
+    originalMaterials,
+    storeOriginalMaterial,
+    chestLooted, // Pass current state
+    skeletonLooted, // Pass current state
+    updateGoldDisplay
+};
+
+function initializeRoom(isFirstRoom: boolean) {
+    // Before calling setupRoom, ensure the context has the latest state for looted items
+    // and the correct reference for highlightedObject if it were managed within the context.
+    // However, looted status is reset by setupRoom internally for a new room.
+    // highlightedObject is managed by main.ts's gaze logic, so it's okay.
+
+    const roomData = setupRoom(isFirstRoom, ruinContext);
+    chest = roomData.newChest;
+    skeleton = roomData.newSkeleton;
+    door = roomData.newDoor;
+
+    // Clear and repopulate highlightableSceneObjects with the new objects
+    // setupRoom's clearRoomObjects already does highlightableSceneObjects.length = 0
+    // if the same array instance is in the context.
+    // Then it returns the new objects to be added.
+    // So, we need to ensure ruinContext.highlightableSceneObjects is the one from main.ts
+    // and then add to it.
+    
+    // Assign the array reference to the context
+    ruinContext.highlightableSceneObjects = highlightableSceneObjects; 
+    // Clear existing items (if any, though setupRoom also does this)
+    highlightableSceneObjects.length = 0; 
+    // Add new items
+    highlightableSceneObjects.push(...roomData.newHighlightableObjects);
+
+    // Update context's direct references if needed, though main.ts uses global vars
+    ruinContext.chest = chest;
+    ruinContext.skeleton = skeleton;
+    ruinContext.door = door;
+}
+
+initializeRoom(true); // Generate the first room
+
+// Update door interaction to use initializeRoom
+document.addEventListener('keydown', (event) => {
+  // For movement, store based on event.code
+  keysPressed[event.code] = true;
+
+  // For interaction, check event.code directly in the same listener
+  // This was previously a separate listener, combining them is fine.
+  if (event.code === 'KeyF' && controls.isLocked && highlightedObject) {
+    const distanceToTarget = camera.position.distanceTo(highlightedObject.position);
+    if (distanceToTarget <= interactionDistance) {
+      // Attempt interaction
+      if (highlightedObject === chest && !chestLooted) {
+        chestLooted = true;
+        playerGold += 100; // Add 100 gold
+        updateGoldDisplay();
+        showPopup("You found 100 gold!", 3000);
+        if (highlightedObject) restoreOriginalMaterial(highlightedObject); // Stop highlighting
+        highlightedObject = null; // Clear highlight
+        // Update context state
+        ruinContext.chestLooted = chestLooted;
+      } else if (highlightedObject === chest && chestLooted) {
+        showPopup("The chest is empty.", 2000);
+      } else if (highlightedObject === skeleton && !skeletonLooted) {
+        skeletonLooted = true;
+
+        // Dispose of old weapon geometry
+        if (weapon.geometry) {
+          weapon.geometry.dispose();
+        }
+        // Create new "sword" geometry (long, thin box)
+        const swordGeometry = new THREE.BoxGeometry(0.08, 0.08, 1.2); // thinner, longer
+        weapon.geometry = swordGeometry;
+        // Optionally change material or appearance
+        // weapon.material = new THREE.MeshStandardMaterial({ color: 0x9999AA });
+
+        showPopup("You found a sword!", 3000);
+        if (highlightedObject) restoreOriginalMaterial(highlightedObject);
+        highlightedObject = null;
+        // Update context state
+        ruinContext.skeletonLooted = skeletonLooted;
+      } else if (highlightedObject === skeleton && skeletonLooted) {
+        showPopup("The skeleton has nothing more of interest.", 2000);
+      } else if (highlightedObject === door) { // Door interaction
+        showPopup("Moving to a new area...", 1500);
+        
+        // Store the current highlighted door to remove its highlight
+        const previouslyHighlightedDoor = highlightedObject;
+
+        // Call initializeRoom which internally calls setupRoom
+        initializeRoom(false);
+
+        // Reposition Player
+        camera.position.set(0, 1.6, roomSize.depth / 2 - 1.5); // Place just inside new "front" door area
+        controls.getObject().position.copy(camera.position); // Ensure controller matches camera
+        // Ensure the player is looking forward into the room, not at the door they just came through
+        // This requires setting the rotation of the camera. A simple way is to make it look at the center of the room.
+        camera.lookAt(0, 1.6, 0);
+
+        if (previouslyHighlightedDoor) restoreOriginalMaterial(previouslyHighlightedDoor); // Clear highlight from old door
+        highlightedObject = null; // Ensure highlightedObject is cleared after room transition
+      }
+    } else {
+      showPopup("Too far to interact", 2000);
+    }
+  }
+});
 
 
 // Basic Attack Animation
