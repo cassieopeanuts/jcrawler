@@ -23,80 +23,24 @@ function showPopup(message: string, duration: number = 3000) {
   }
 }
 
+import { setupRoom, RuinSetupContext } from './game/aethelburg_ruins/ruinUtils'; // Import new functions
+
+// Helper functions for UI (showPopup, updateGoldDisplay) - remain in main.ts for now or move to a UI manager
+function showPopup(message: string, duration: number = 3000) {
+  if (popupElement) {
+    popupElement.textContent = message;
+    popupElement.classList.remove('hidden');
+    setTimeout(() => {
+      popupElement.classList.add('hidden');
+    }, duration);
+  }
+}
+
 function updateGoldDisplay() {
   if (goldDisplayElement) {
     goldDisplayElement.textContent = `Gold: ${playerGold}`;
   }
 }
-
-function clearRoomObjects() {
-  if (chest) {
-    scene.remove(chest);
-    chest.geometry.dispose();
-    // Assuming chestMaterial is not an array and is MeshStandardMaterial
-    (chest.material as THREE.MeshStandardMaterial).dispose();
-  }
-  if (skeleton) {
-    scene.remove(skeleton);
-    skeleton.geometry.dispose();
-    (skeleton.material as THREE.MeshStandardMaterial).dispose();
-  }
-  if (door) {
-    scene.remove(door);
-    door.geometry.dispose();
-    (door.material as THREE.MeshStandardMaterial).dispose();
-  }
-  highlightableSceneObjects = []; // Clear the array for the new room's objects
-  if (highlightedObject) { // Clear any lingering highlight
-      highlightedObject = null; 
-  }
-  // Note: originalMaterials map might grow if we don't clear it, but it's keyed by material instance.
-  // If new materials are created each time, it's fine. If materials are reused, it's also fine.
-  // For simplicity, we'll let it be for now.
-}
-
-function setupRoom(_isFirstRoom: boolean) { // We'll use isFirstRoom later if door logic becomes more complex
-  clearRoomObjects(); // Clear previous room's objects first
-
-  // Reset loot status
-  chestLooted = false;
-  skeletonLooted = false;
-
-  // Create and place Chest
-  const chestX = Math.random() * (roomSize.width - 2) - (roomSize.width / 2 - 1); // Random X within room, 1 unit from side walls
-  const chestZ = Math.random() * (roomSize.depth - 2) - (roomSize.depth / 2 - 1); // Random Z within room, 1 unit from front/back walls
-  chest = new THREE.Mesh(defaultChestGeometry, defaultChestMaterial.clone()); // Clone material to avoid issues if it was modified
-  chest.position.set(chestX, 0.25, chestZ);
-  scene.add(chest);
-
-  // Create and place Skeleton
-  let skeletonX, skeletonZ;
-  do {
-    skeletonX = Math.random() * (roomSize.width - 2) - (roomSize.width / 2 - 1);
-    skeletonZ = Math.random() * (roomSize.depth - 2) - (roomSize.depth / 2 - 1);
-  } while (new THREE.Vector3(skeletonX, 0, skeletonZ).distanceTo(chest.position) < 2.0); // Ensure skeleton is not too close to chest
-  
-  skeleton = new THREE.Mesh(defaultSkeletonGeometry, defaultSkeletonMaterial.clone());
-  skeleton.position.set(skeletonX, 0.5, skeletonZ);
-  skeleton.rotation.z = Math.PI / 2; // Laying down
-  scene.add(skeleton);
-
-  // Create and place Door (for now, always in the same spot on the front wall)
-  door = new THREE.Mesh(defaultDoorGeometry, defaultDoorMaterial.clone());
-  door.position.set(0, 1, roomSize.depth / 2 - 0.05); // Centered X on front wall
-  scene.add(door);
-  
-  // Update highlightable objects
-  highlightableSceneObjects = [chest, skeleton, door];
-  
-  // Store original materials for new objects
-  storeOriginalMaterial(chest);
-  storeOriginalMaterial(skeleton);
-  storeOriginalMaterial(door);
-
-  updateGoldDisplay(); // Refresh gold display (though it doesn't change here)
-}
-
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -129,6 +73,11 @@ scene.add(torchLight); // Add to scene so it can be parented
 
 // Room Geometry
 const roomSize = { width: 10, height: 3, depth: 10 };
+
+// Dynamic Game Objects - these will be managed by setupRoom via the context
+let chest: THREE.Mesh | undefined;
+let skeleton: THREE.Mesh | undefined;
+let door: THREE.Mesh | undefined;
 
 // Floor
 const floorGeometry = new THREE.PlaneGeometry(roomSize.width, roomSize.depth);
