@@ -4,10 +4,16 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Vite + TS</title>
+    <title>3D Dungeon Crawler</title>
+    <style>
+      body { margin: 0; }
+      canvas { display: block; }
+    </style>
   </head>
   <body>
-    <div id="app"></div>
+    <div id="scene-container"></div>
+    <div id="popup" class="hidden"></div>
+    <div id="gold-display">Gold: 0</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
