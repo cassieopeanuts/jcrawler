@@ -319,18 +319,23 @@ export function startTestDungeon() {
     
     // Dungeon generation and rendering logic will be called here
     // This array will store wall meshes for collision detection
-    let dungeonWallMeshes: THREE.Mesh[] = []; 
+    let dungeonWallMeshes: THREE.Mesh[] = [];
+    let doorMeshes: THREE.Mesh[] = []; // For potential future interaction
     
-    const dungeonData = generateDungeonData(GRID_WIDTH, GRID_HEIGHT);
-    // Pass dungeonData.rooms to the rendering function for torch placement
-    dungeonWallMeshes = renderDungeonFromGrid(scene, dungeonData.grid, CELL_SIZE, dungeonData.rooms);
+    // Make dungeonDataInstance accessible and updatable
+    let dungeonDataInstance = generateDungeonData(GRID_WIDTH, GRID_HEIGHT);
+
+    // Initial rendering
+    let renderResult = renderDungeonFromGrid(scene, dungeonDataInstance.grid, CELL_SIZE, dungeonDataInstance.rooms);
+    dungeonWallMeshes = renderResult.wallMeshes;
+    doorMeshes = renderResult.doorMeshes;
 
     // Position player at start door
-    if (dungeonData.startDoorPosition) {
+    if (dungeonDataInstance.startDoorPosition) {
         // Calculate world coordinates, ensuring player is at correct height (center of cell y, plus half player height)
         const playerYPosition = playerMesh.position.y; // Assuming playerMesh.position.y is set correctly for standing on floor (e.g. 0.9)
-        const startWorldX = (dungeonData.startDoorPosition.x - GRID_WIDTH / 2 + 0.5) * CELL_SIZE;
-        const startWorldZ = (dungeonData.startDoorPosition.y - GRID_HEIGHT / 2 + 0.5) * CELL_SIZE;
+        const startWorldX = (dungeonDataInstance.startDoorPosition.x - GRID_WIDTH / 2 + 0.5) * CELL_SIZE;
+        const startWorldZ = (dungeonDataInstance.startDoorPosition.y - GRID_HEIGHT / 2 + 0.5) * CELL_SIZE;
         controls.getObject().position.set(startWorldX, playerYPosition, startWorldZ);
         playerMesh.position.set(startWorldX, playerYPosition, startWorldZ);
     }
@@ -416,11 +421,84 @@ export function startTestDungeon() {
 
     // --- Animation Loop ---
     const clock = new THREE.Clock();
+    let fKeyPressedLastFrame = false; // To prevent multiple regenerations per key press
+
+    function regenerateDungeon() {
+        console.log("Regenerating dungeon...");
+        // Generate new dungeon data
+        const newDungeonData = generateDungeonData(GRID_WIDTH, GRID_HEIGHT);
+
+        // Update the shared dungeonDataInstance
+        dungeonDataInstance = newDungeonData;
+
+        // Clear old geometry and render new dungeon
+        // renderDungeonFromGrid handles clearing old elements with userData.isDungeonElement
+        const newRenderResult = renderDungeonFromGrid(scene, dungeonDataInstance.grid, CELL_SIZE, dungeonDataInstance.rooms);
+        dungeonWallMeshes = newRenderResult.wallMeshes;
+        doorMeshes = newRenderResult.doorMeshes; // Update doorMeshes as well
+
+        // Position player at the new start door
+        if (dungeonDataInstance.startDoorPosition) {
+            const playerYPosition = playerMesh.position.y; // Maintain current Y
+            const startWorldX = (dungeonDataInstance.startDoorPosition.x - GRID_WIDTH / 2 + 0.5) * CELL_SIZE;
+            const startWorldZ = (dungeonDataInstance.startDoorPosition.y - GRID_HEIGHT / 2 + 0.5) * CELL_SIZE;
+            controls.getObject().position.set(startWorldX, playerYPosition, startWorldZ);
+            playerMesh.position.set(startWorldX, playerYPosition, startWorldZ); // Also update visual mesh
+             // Ensure camera is looking forward after teleporting
+            camera.lookAt(playerMesh.position.x + forwardDirection.x, playerYPosition, playerMesh.position.z + forwardDirection.z);
+
+        }
+        console.log("Dungeon regenerated.");
+        // Update the global grid reference if interactions depend on it directly
+        // currentGrid = newDungeonData.grid; // Example if you had a global currentGrid
+    }
+
+    // Need forwardDirection for camera reset in regenerateDungeon
+    const forwardDirection = new THREE.Vector3();
+
     function animate() {
         requestAnimationFrame(animate);
         const delta = clock.getDelta();
         
+        camera.getWorldDirection(forwardDirection); // Update forwardDirection each frame
+        forwardDirection.y = 0;
+        forwardDirection.normalize();
+
         updatePlayerMovement(delta); // Call player movement update
+
+        // Interaction for End Door
+        if (keysPressed['KeyF']) {
+            if (!fKeyPressedLastFrame) { // Process 'F' key press only once
+                const playerGridX = Math.floor(controls.getObject().position.x / CELL_SIZE + GRID_WIDTH / 2);
+                const playerGridY = Math.floor(controls.getObject().position.z / CELL_SIZE + GRID_HEIGHT / 2);
+
+                if (playerGridX >= 0 && playerGridX < GRID_WIDTH && playerGridY >= 0 && playerGridY < GRID_HEIGHT) {
+                    // Use the latest grid data for checking cell type
+                    // This assumes dungeonData.grid is the current grid. If regenerateDungeon updates a global
+                    // 'currentGrid', use that here. For now, using dungeonData from initial load.
+                    // This will only work for the initially loaded dungeonData.grid.
+                    // For subsequent dungeons, we need to ensure this check uses the *current* grid.
+                    // Let's assume regenerateDungeon will update a 'currentLiveGrid' reference or similar.
+                    // For now, this interaction will only work on the *first* dungeon's end door.
+                    // To fix this, `dungeonData` should be made a `let` variable in `startTestDungeon` scope
+                    // and reassigned in `regenerateDungeon`.
+
+                    // Quick fix: make dungeonData updatable
+                    // This was: const dungeonData = generateDungeonData(...)
+                    // Change to: let dungeonDataInstance = generateDungeonData(...)
+                    // And then in regenerateDungeon: dungeonDataInstance = newDungeonData;
+                    // For now, this will be a known issue if not addressing dungeonData scope.
+                    // The current fix will be to make dungeonData a 'let' and reassign. (This is done via dungeonDataInstance)
+
+                    if (dungeonDataInstance.grid[playerGridY] && dungeonDataInstance.grid[playerGridY][playerGridX] === CELL_DOOR_END) {
+                        regenerateDungeon();
+                    }
+                }
+            }
+            fKeyPressedLastFrame = true;
+        } else {
+            fKeyPressedLastFrame = false;
+        }
 
         renderer.render(scene, camera);
     }
@@ -430,39 +508,39 @@ export function startTestDungeon() {
 
 // --- Dungeon Visualization ---
 
-// Helper to create a torch (model + light)
-function createTorch(scene: THREE.Scene, position: THREE.Vector3, cellSize: number) {
-    const torchHeight = cellSize * 0.7;
-    const lightHeight = cellSize * 0.65;
+// Helper to create a torch (model + light) - testRoom.ts style
+function createTorch(scene: THREE.Scene, worldPosition: THREE.Vector3, cellSize: number) {
     const torchColor = 0xffaa33; // Warm orange
+    const torchRadius = cellSize * 0.1; // Radius of the emissive sphere
 
-    // Torch model (simple cylinder)
-    const torchModelGeometry = new THREE.CylinderGeometry(0.05 * cellSize, 0.1 * cellSize, torchHeight, 8);
-    const torchModelMaterial = new THREE.MeshStandardMaterial({ color: 0x503010 }); // Dark wood/metal
+    // Emissive sphere model for the torch flame
+    const torchModelGeometry = new THREE.SphereGeometry(torchRadius, 16, 16);
+    const torchModelMaterial = new THREE.MeshStandardMaterial({
+        color: torchColor,
+        emissive: torchColor,
+        emissiveIntensity: 1.5 // Slightly brighter emissive intensity
+    });
     const torchModel = new THREE.Mesh(torchModelGeometry, torchModelMaterial);
 
-    // Flame part of the model
-    const flameGeometry = new THREE.SphereGeometry(0.1 * cellSize, 8, 8);
-    const flameMaterial = new THREE.MeshStandardMaterial({ color: torchColor, emissive: torchColor, emissiveIntensity: 2 });
-    const flameMesh = new THREE.Mesh(flameGeometry, flameMaterial);
-    flameMesh.position.y = torchHeight / 2; // Position flame at the top of cylinder
-    torchModel.add(flameMesh);
+    // Position the torch model. Y position might need adjustment based on where it's placed (wall/floor)
+    // For now, assume it's placed relative to a cell center, at a certain height.
+    torchModel.position.copy(worldPosition);
+    torchModel.position.y = cellSize * 0.6; // Default height from floor if position.y was 0
 
-    torchModel.position.copy(position);
-    torchModel.position.y = torchHeight / 2; // Base of the torch on the floor or wall mount point
+    // PointLight parented to the torch model
+    const pointLight = new THREE.PointLight(torchColor, 1.0, cellSize * 4); // color, intensity, distance
+    // Light is at the center of the sphere model by default if parented with no offset.
+    // pointLight.position.set(0,0,0); // Not needed if centered in parent
 
-    // PointLight attached to the torch model (slightly above its base, near the flame)
-    const pointLight = new THREE.PointLight(torchColor, 1.2, cellSize * 3.5); // color, intensity, distance
-    pointLight.position.set(0, lightHeight - (torchHeight/2) , 0); // Relative to torchModel's center
-
-    torchModel.add(pointLight);
+    torchModel.add(pointLight); // Parent light to model
     torchModel.userData.isDungeonElement = true;
     scene.add(torchModel);
 }
 
 
-function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: number, rooms: RoomArea[]): THREE.Mesh[] {
+function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: number, rooms: RoomArea[]): { wallMeshes: THREE.Mesh[], doorMeshes: THREE.Mesh[] } {
     const wallMeshes: THREE.Mesh[] = [];
+    const doorMeshes: THREE.Mesh[] = [];
     const objectsToRemove = scene.children.filter(child => child.userData.isDungeonElement);
     objectsToRemove.forEach(obj => {
         scene.remove(obj);
@@ -489,7 +567,12 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
     const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x505050, side: THREE.DoubleSide }); // Dark grey ceiling
     const ceilingGeometry = new THREE.PlaneGeometry(cellSize, cellSize);
 
-    const doorVisualGeometry = new THREE.BoxGeometry(cellSize * 0.8, cellSize * 0.9, cellSize * 0.1); // Thin box for door visual
+    // Slimmer door for wall placement
+    const doorVisualGeometry = new THREE.BoxGeometry(cellSize * 0.8, cellSize * 0.9, cellSize * 0.1); // Width, Height, Thickness
+    const doorThickness = cellSize * 0.1; // This is the actual thickness of the door model along its local Z axis
+
+    // Keep track of walls that have doors in them to avoid rendering the wall cube
+    const wallsWithDoors = new Set<string>(); // "x,y" string for key
 
     for (let y = 0; y < grid.length; y++) {
         for (let x = 0; x < grid[y].length; x++) {
@@ -497,13 +580,85 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
             const worldX = (x - grid[y].length / 2) * cellSize + cellSize / 2;
             const worldZ = (y - grid.length / 2) * cellSize + cellSize / 2;
 
-            if (cellType === CELL_MAZE_WALL) {
-                const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial.clone()); // Clone if material props change per wall
-                wallMesh.position.set(worldX, cellSize / 2, worldZ);
-                wallMesh.userData.isDungeonElement = true;
-                scene.add(wallMesh);
-                wallMeshes.push(wallMesh);
-            } else if (cellType === CELL_PATH || cellType === CELL_ROOM_FLOOR || cellType === CELL_DOOR_START || cellType === CELL_DOOR_END) {
+            if (cellType === CELL_DOOR_START || cellType === CELL_DOOR_END) {
+                // Render floor and ceiling for the door cell itself
+                const doorCellFloorMaterial = (cellType === CELL_DOOR_START) ? startDoorMaterial : endDoorMaterial;
+                const floorPlane = new THREE.Mesh(floorPlaneGeometry, doorCellFloorMaterial.clone());
+                floorPlane.rotation.x = -Math.PI / 2;
+                floorPlane.position.set(worldX, 0, worldZ);
+                floorPlane.userData.isDungeonElement = true;
+                scene.add(floorPlane);
+
+                const ceilingPlane = new THREE.Mesh(ceilingGeometry, ceilingMaterial.clone());
+                ceilingPlane.rotation.x = Math.PI / 2;
+                ceilingPlane.position.set(worldX, cellSize, worldZ);
+                ceilingPlane.userData.isDungeonElement = true;
+                scene.add(ceilingPlane);
+
+                // Now place the door visual in an adjacent wall
+                const doorVisualMaterialToUse = (cellType === CELL_DOOR_START) ? startDoorMaterial : endDoorMaterial;
+                const doorMesh = new THREE.Mesh(doorVisualGeometry, doorVisualMaterialToUse.clone());
+                doorMesh.userData.isDungeonElement = true;
+
+                let placedDoor = false;
+                // Check neighbors for a wall to place the door into
+                // Order: South, East, North, West
+                const wallCheckOrder = [
+                    { dx: 0, dy: 1, rotY: 0 }, // Wall to the South of door cell, door faces North
+                    { dx: 1, dy: 0, rotY: Math.PI / 2 }, // Wall to the East of door cell, door faces West
+                    { dx: 0, dy: -1, rotY: Math.PI }, // Wall to the North of door cell, door faces South
+                    { dx: -1, dy: 0, rotY: -Math.PI / 2 }  // Wall to the West of door cell, door faces East
+                ];
+
+                for (const offset of wallCheckOrder) {
+                    const wallX = x + offset.dx;
+                    const wallY = y + offset.dy;
+                    if (wallX >= 0 && wallX < grid[0].length && wallY >= 0 && wallY < grid.length && grid[wallY][wallX] === CELL_MAZE_WALL) {
+                        const wallWorldX = (wallX - grid[0].length / 2) * cellSize + cellSize / 2;
+                        const wallWorldZ = (wallY - grid.length / 2) * cellSize + cellSize / 2;
+
+                        doorMesh.position.set(wallWorldX, cellSize * 0.45, wallWorldZ); // Centered in wall cell, half height
+                        doorMesh.rotation.y = offset.rotY;
+
+                        // Adjust position slightly to be "in" the wall plane, not centered in wall cell block
+                        if (offset.dx === 1) { // Wall to East, door mesh X moves slightly West
+                            doorMesh.position.x -= (cellSize / 2) - (doorThickness / 2) ;
+                        } else if (offset.dx === -1) { // Wall to West, door mesh X moves slightly East
+                            doorMesh.position.x += (cellSize / 2) - (doorThickness / 2);
+                        } else if (offset.dy === 1) { // Wall to South, door mesh Z moves slightly North
+                            doorMesh.position.z -= (cellSize/2) - (doorThickness/2);
+                        } else if (offset.dy === -1) { // Wall to North, door mesh Z moves slightly South
+                            doorMesh.position.z += (cellSize/2) - (doorThickness/2);
+                        }
+
+
+                        scene.add(doorMesh);
+                        doorMeshes.push(doorMesh);
+                        wallsWithDoors.add(`${wallX},${wallY}`); // Mark this wall as having a door
+                        placedDoor = true;
+                        break;
+                    }
+                }
+                if (!placedDoor) { // Fallback if no adjacent wall (e.g. door cell in open space - should not happen with maze)
+                                   // Place it in its own cell like before
+                    const doorVisMaterial = (cellType === CELL_DOOR_START) ? startDoorMaterial : endDoorMaterial;
+                    const fallbackDoorMesh = new THREE.Mesh(new THREE.BoxGeometry(cellSize*0.8, cellSize*0.9, cellSize*0.1), doorVisMaterial.clone());
+                    fallbackDoorMesh.position.set(worldX, cellSize * 0.45, worldZ);
+                    fallbackDoorMesh.userData.isDungeonElement = true;
+                    scene.add(fallbackDoorMesh);
+                    doorMeshes.push(fallbackDoorMesh);
+                }
+
+
+            } else if (cellType === CELL_MAZE_WALL) {
+                if (!wallsWithDoors.has(`${x},${y}`)) { // Only render wall if no door is in it
+                    const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial.clone());
+                    wallMesh.position.set(worldX, cellSize / 2, worldZ);
+                    wallMesh.userData.isDungeonElement = true;
+                    scene.add(wallMesh);
+                    wallMeshes.push(wallMesh);
+                }
+            } else if (cellType === CELL_PATH || cellType === CELL_ROOM_FLOOR) {
                 let currentFloorMaterial = pathMaterial;
                 if (cellType === CELL_ROOM_FLOOR) currentFloorMaterial = roomFloorMaterial;
                 else if (cellType === CELL_DOOR_START) currentFloorMaterial = startDoorMaterial;
