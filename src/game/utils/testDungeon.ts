@@ -321,7 +321,7 @@ export function startTestDungeon() {
     // This array will store wall meshes for collision detection
     let dungeonWallMeshes: THREE.Mesh[] = [];
     let doorMeshes: THREE.Mesh[] = []; // For potential future interaction
-    
+
     // Make dungeonDataInstance accessible and updatable
     let dungeonDataInstance = generateDungeonData(GRID_WIDTH, GRID_HEIGHT);
 
@@ -341,7 +341,7 @@ export function startTestDungeon() {
     }
 
     console.log("Test Dungeon Started: Basic scene set up.");
-    console.log("Dungeon Data:", dungeonData);
+    console.log("Dungeon Data:", dungeonDataInstance); // Corrected variable name
     console.log("Number of wall meshes for collision:", dungeonWallMeshes.length);
 
     // --- Collision Detection Function ---
@@ -660,9 +660,11 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
                 }
             } else if (cellType === CELL_PATH || cellType === CELL_ROOM_FLOOR) {
                 let currentFloorMaterial = pathMaterial;
-                if (cellType === CELL_ROOM_FLOOR) currentFloorMaterial = roomFloorMaterial;
-                else if (cellType === CELL_DOOR_START) currentFloorMaterial = startDoorMaterial;
-                else if (cellType === CELL_DOOR_END) currentFloorMaterial = endDoorMaterial;
+                if (cellType === CELL_ROOM_FLOOR) {
+                    currentFloorMaterial = roomFloorMaterial;
+                }
+                // CELL_DOOR_START and CELL_DOOR_END are handled in their own block above
+                // No need to check for them here again for floor material
 
                 const floorPlane = new THREE.Mesh(floorPlaneGeometry, currentFloorMaterial.clone());
                 floorPlane.rotation.x = -Math.PI / 2;
@@ -721,5 +723,5 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
         if ((placeholderFloor as THREE.Mesh).geometry) (placeholderFloor as THREE.Mesh).geometry.dispose();
         if ((placeholderFloor as THREE.Mesh).material) ((placeholderFloor as THREE.Mesh).material as THREE.Material).dispose();
     }
-    return wallMeshes;
+    return { wallMeshes, doorMeshes };
 }
