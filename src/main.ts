@@ -1,5 +1,6 @@
 import './style.css';
 import { startTestRoom } from './game/utils/testRoom';
+import { startTestDungeon } from './game/utils/testDungeon';
 
 function showMainMenu() {
   // Get references to game-specific UI elements
@@ -52,27 +53,44 @@ function showMainMenu() {
   startButton.onmouseleave = () => startButton.style.backgroundColor = '#4CAF50';
   menuContainer.appendChild(startButton);
 
+  // Create "Start Test Dungeon" button
+  const startDungeonButton = document.createElement('button');
+  startDungeonButton.id = 'start-test-dungeon-button';
+  startDungeonButton.textContent = 'Start Test Dungeon';
+  startDungeonButton.style.padding = '12px 25px';
+  startDungeonButton.style.fontSize = '18px';
+  startDungeonButton.style.marginTop = '10px'; // Add some space below the first button
+  startDungeonButton.style.cursor = 'pointer';
+  startDungeonButton.style.backgroundColor = '#007bff'; // Blue color
+  startDungeonButton.style.color = 'white';
+  startDungeonButton.style.border = 'none';
+  startDungeonButton.style.borderRadius = '5px';
+  
+  startDungeonButton.onmouseenter = () => startDungeonButton.style.backgroundColor = '#0069d9';
+  startDungeonButton.onmouseleave = () => startDungeonButton.style.backgroundColor = '#007bff';
+  menuContainer.appendChild(startDungeonButton);
+
+
   document.body.appendChild(menuContainer);
 
-  // Add event listener to the button
+  // Event listener for "Start Test Room" button
   startButton.addEventListener('click', () => {
-    // Hide main menu
     menuContainer.style.display = 'none';
-
-    // Show game-specific UI elements (if they exist and are part of index.html)
-    if (sceneContainer) sceneContainer.style.display = 'block'; 
-    if (popupElement) {
-        // popupElement starts with class 'hidden'. 
-        // We ensure it's in the DOM, testRoom.ts will manage actual visibility.
-        popupElement.style.display = 'block'; // Or some other display type if 'hidden' class does more
-    }
+    if (sceneContainer) sceneContainer.style.display = 'block';
+    if (popupElement) popupElement.style.display = 'block';
     if (goldDisplayElement) goldDisplayElement.style.display = 'block';
-    
-    // instructionsElement is created by testRoom.ts if not found, so no need to show it here
-    // unless it was part of index.html and hidden.
-
-    // Call the function to start the test room
     startTestRoom();
+  });
+
+  // Event listener for "Start Test Dungeon" button
+  startDungeonButton.addEventListener('click', () => {
+    menuContainer.style.display = 'none';
+    if (sceneContainer) sceneContainer.style.display = 'block';
+    // testDungeon.ts also expects popup and goldDisplay to be available,
+    // though it might not use them initially.
+    if (popupElement) popupElement.style.display = 'block'; 
+    if (goldDisplayElement) goldDisplayElement.style.display = 'block';
+    startTestDungeon();
   });
 }
 
