@@ -3,162 +3,205 @@ import { PointerLockControls } from 'three/examples/jsm/controls/PointerLockCont
 import '../../style.css'; // Basic styles
 
 // --- Dungeon Grid Parameters & Cell Types ---
-const GRID_WIDTH = 30; // Number of cells horizontally
-const GRID_HEIGHT = 30; // Number of cells vertically
+const GRID_WIDTH = 31; // Number of cells horizontally (odd number for maze algo)
+const GRID_HEIGHT = 31; // Number of cells vertically (odd number for maze algo)
 const CELL_SIZE = 2;   // Size of one cell in 3D units (e.g., 2x2 meters)
 
 // Cell type identifiers
-const CELL_EMPTY = 0; // Or use for un-carved areas if not starting with all walls
-const CELL_WALL = 1;
-const CELL_FLOOR = 2; // General walkable floor (could be used for tunnels)
-const CELL_ROOM_FLOOR = 3;
-const CELL_TUNNEL_FLOOR = 4; // Explicitly for tunnels if needed for different styling/logic
-const CELL_DOOR_START = 5;
-const CELL_DOOR_END = 6;
-// Potentially more: CELL_CORRIDOR_FLOOR, CELL_WATER, CELL_TRAP etc.
+const CELL_EMPTY = 0; // Unused for now
+const CELL_MAZE_WALL = 1; // Wall cell in the maze
+const CELL_PATH = 2;      // Carved path cell in the maze
+const CELL_ROOM_FLOOR = 3;// Floor of an expanded room area
+const CELL_DOOR_START = 5;// Location of the start door
+const CELL_DOOR_END = 6;  // Location of the end door
+// CELL_TUNNEL_FLOOR is deprecated, CELL_PATH will be used for maze corridors.
 
 // Type for the grid data
 type DungeonGrid = number[][];
 
 // --- Dungeon Generation Algorithm ---
 
-interface Room {
-    x: number;
-    y: number;
-    width: number;
-    height: number;
-    centerX: number;
-    centerY: number;
+// Room interface might not be needed in the same way if rooms are just expanded paths.
+// We'll store room locations as simple {x,y} points or small areas.
+interface RoomArea { // Simple representation for an area designated as a room
+    x: number; // Top-left x of the room area on the grid
+    y: number; // Top-left y of the room area on the grid
+    width: number; // Width of the room area on the grid
+    height: number; // Height of the room area on the grid
 }
 
-function generateDungeonData(width: number, height: number): { grid: DungeonGrid, rooms: Room[], startDoorPosition: {x: number, y: number} | null, endDoorPosition: {x: number, y: number} | null } {
-    const grid: DungeonGrid = Array.from({ length: height }, () => Array(width).fill(CELL_WALL));
-    const rooms: Room[] = [];
-    const minRoomSize = 4;
-    const maxRoomSize = 6; // Decreased from 8
-    const numRoomAttempts = 15; // Decreased from 20 // Try to place this many rooms
 
-    for (let i = 0; i < numRoomAttempts; i++) {
-        const roomWidth = Math.floor(Math.random() * (maxRoomSize - minRoomSize + 1)) + minRoomSize;
-        const roomHeight = Math.floor(Math.random() * (maxRoomSize - minRoomSize + 1)) + minRoomSize;
-        // Position must be odd to ensure walls can surround rooms if using even room sizes + odd positions for walls
-        const x = Math.floor(Math.random() * (width - roomWidth - 1) / 2) * 2 + 1;
-        const y = Math.floor(Math.random() * (height - roomHeight - 1) / 2) * 2 + 1;
+function generateDungeonData(width: number, height: number): { grid: DungeonGrid, rooms: RoomArea[], startDoorPosition: {x: number, y: number} | null, endDoorPosition: {x: number, y: number} | null } {
+    // Initialize grid with all walls
+    // The maze algorithm will carve paths.
+    // For Recursive Backtracker, a common approach is a grid where:
+    // - Even coordinates (e.g., 0,0, 2,2, 0,2) are potential path cells.
+    // - Odd coordinates (e.g., 1,0, 0,1, 1,1) are walls between path cells.
+    // To simplify, our grid will represent "cells". If a cell is a path, it's walkable.
+    // If it's a wall, it's not. The algorithm will convert wall cells to path cells.
+    // The grid dimensions (width, height) should be odd to allow paths to be surrounded by walls.
+    // e.g. W P W P W (P = Path, W = Wall)
+    //      P P P P P
+    //      W P W P W
+    // Our GRID_WIDTH/HEIGHT refer to the total dimensions.
+    // The maze carving will happen on cells at odd indices like (1,1), (1,3), (3,1) etc.
+    // And it will carve walls at even indices like (1,2) or (2,1) to connect them.
 
-        let overlaps = false;
-        // Check for overlap with existing rooms (simple bounding box check with padding)
-        for (const room of rooms) {
-            if (x < room.x + room.width + 1 && x + roomWidth + 1 > room.x &&
-                y < room.y + room.height + 1 && y + roomHeight + 1 > room.y) {
-                overlaps = true;
-                break;
-            }
+    const grid: DungeonGrid = Array.from({ length: height }, () => Array(width).fill(CELL_MAZE_WALL));
+    const rooms: RoomArea[] = []; // To store locations of expanded room areas
+
+    // --- Recursive Backtracker Maze Algorithm ---
+    const carveMaze = (cx: number, cy: number) => {
+        grid[cy][cx] = CELL_PATH; // Carve the current cell
+
+        // Define directions (N, S, E, W) for neighbors 2 cells away
+        const directions = [
+            { x: 0, y: -2, wallX: 0, wallY: -1 }, // North
+            { x: 0, y: 2,  wallX: 0, wallY: 1 },  // South
+            { x: 2, y: 0,  wallX: 1, wallY: 0 },  // East
+            { x: -2, y: 0, wallX: -1, wallY: 0 }  // West
+        ];
+
+        // Shuffle directions
+        for (let i = directions.length - 1; i > 0; i--) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [directions[i], directions[j]] = [directions[j], directions[i]];
         }
 
-        if (!overlaps) {
-            for (let rY = y; rY < y + roomHeight; rY++) {
-                for (let rX = x; rX < x + roomWidth; rX++) {
-                    if (rX >= 0 && rX < width && rY >= 0 && rY < height) { // Boundary check
-                        grid[rY][rX] = CELL_ROOM_FLOOR;
+        for (const dir of directions) {
+            const nx = cx + dir.x; // Neighbor X
+            const ny = cy + dir.y; // Neighbor Y
+            const wallNx = cx + dir.wallX; // Wall X between current and neighbor
+            const wallNy = cy + dir.wallY; // Wall Y between current and neighbor
+
+            // Check if neighbor is within bounds and unvisited (still a wall)
+            if (nx > 0 && nx < width - 1 && ny > 0 && ny < height - 1 && grid[ny][nx] === CELL_MAZE_WALL) {
+                grid[wallNy][wallNx] = CELL_PATH; // Carve wall to neighbor
+                carveMaze(nx, ny); // Recursively visit neighbor
+            }
+        }
+    };
+
+    // Start maze generation from a typical starting cell (e.g., 1,1)
+    // Ensure starting cell is within bounds (especially for small test grids)
+    if (width > 1 && height > 1) {
+        carveMaze(1, 1);
+    }
+    // --- End Maze Algorithm ---
+
+    // --- Integrate Rooms into the Maze ---
+    const numRoomsToCreate = Math.floor(Math.random() * 3) + 3; // 3 to 5 rooms
+    const roomMinSize = 2; // Min width/height in cells for a room
+    const roomMaxSize = 3; // Max width/height in cells for a room
+    const maxRoomAttempts = 50; // Attempts to place rooms
+
+    for (let i = 0; i < maxRoomAttempts && rooms.length < numRoomsToCreate; i++) {
+        // Pick a random *odd* coordinate for potential room center (must be a path cell)
+        const potentialRoomX = Math.floor(Math.random() * ((width - 1) / 2)) * 2 + 1;
+        const potentialRoomY = Math.floor(Math.random() * ((height - 1) / 2)) * 2 + 1;
+
+        if (grid[potentialRoomY][potentialRoomX] === CELL_PATH) {
+            const roomWidth = Math.floor(Math.random() * (roomMaxSize - roomMinSize + 1)) + roomMinSize;
+            const roomHeight = Math.floor(Math.random() * (roomMaxSize - roomMinSize + 1)) + roomMinSize;
+
+            // Calculate top-left corner for the room, ensuring it's on the grid
+            // Try to center the room around potentialRoomX, potentialRoomY
+            const rX = Math.max(1, potentialRoomX - Math.floor(roomWidth / 2));
+            const rY = Math.max(1, potentialRoomY - Math.floor(roomHeight / 2));
+
+            // Ensure room doesn't go out of bounds (respecting 1-cell border)
+            if (rX + roomWidth < width -1 && rY + roomHeight < height -1) {
+                // Basic check for overlap: for simplicity, we don't do a detailed overlap check here
+                // as rooms are small and maze is sparse. Could be improved.
+                // A simple check: is the center of this new room already part of another room?
+                let canPlace = true;
+                for (const existingRoom of rooms) {
+                    const centerX = rX + roomWidth / 2;
+                    const centerY = rY + roomHeight / 2;
+                    if (centerX >= existingRoom.x && centerX < existingRoom.x + existingRoom.width &&
+                        centerY >= existingRoom.y && centerY < existingRoom.y + existingRoom.height) {
+                        canPlace = false;
+                        break;
                     }
                 }
-            }
-            const newRoom: Room = {
-                x, y, width: roomWidth, height: roomHeight,
-                centerX: Math.floor(x + roomWidth / 2),
-                centerY: Math.floor(y + roomHeight / 2)
-            };
-            rooms.push(newRoom);
-        }
-    }
 
-    // Connect rooms with tunnels
-    for (let i = 0; i < rooms.length - 1; i++) {
-        const r1 = rooms[i];
-
-        // Connect to the next room in the list
-        const r2_primary = rooms[i + 1];
-        connectTwoRooms(grid, r1, r2_primary);
-
-        // Chance to connect to the room after next as well, for more tunnels
-        if (i < rooms.length - 2 && Math.random() < 0.5) { // 50% chance
-            const r2_secondary = rooms[i + 2];
-            // Basic check: don't try to connect if it's the same as primary target (can happen with few rooms)
-            // A more robust check would be to see if they are already connected, but this is simpler.
-            if (r2_secondary !== r2_primary) {
-                 connectTwoRooms(grid, r1, r2_secondary);
+                if (canPlace) {
+                    for (let yOffset = 0; yOffset < roomHeight; yOffset++) {
+                        for (let xOffset = 0; xOffset < roomWidth; xOffset++) {
+                            grid[rY + yOffset][rX + xOffset] = CELL_ROOM_FLOOR;
+                        }
+                    }
+                    rooms.push({ x: rX, y: rY, width: roomWidth, height: roomHeight });
+                }
             }
         }
     }
+    // --- End Room Integration ---
 
-    // Helper function to carve tunnels between two rooms
-    function connectTwoRooms(grid: DungeonGrid, room1: Room, room2: Room) {
-        let curX = room1.centerX;
-        let curY = room1.centerY;
-
-        // Randomly decide to go horizontal then vertical, or vice-versa
-        if (Math.random() > 0.5) {
-            // Horizontal then Vertical
-            while (curX !== room2.centerX) {
-                grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curX += Math.sign(room2.centerX - curX);
-            }
-            while (curY !== room2.centerY) {
-                grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curY += Math.sign(room2.centerY - curY);
-            }
-        } else {
-            // Vertical then Horizontal
-            while (curY !== room2.centerY) {
-                grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curY += Math.sign(room2.centerY - curY);
-            }
-            while (curX !== room2.centerX) {
-                grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curX += Math.sign(room2.centerX - curX);
-            }
-        }
-        grid[curY][curX] = CELL_TUNNEL_FLOOR; // Ensure endpoint of tunnel is floor
-    }
-
-    // Original tunnel connection logic was here, now refactored into connectTwoRooms
-    // and called within the loop above.
-    // The loop for (let i = 0; i < rooms.length - 1; i++) now uses connectTwoRooms.
-    // The old direct implementation within that loop is replaced by calls to connectTwoRooms.
-    // For example, the following lines are now part of connectTwoRooms:
-    // let curX = r1.centerX;
-    // let curY = r1.centerY;
-    // ... and the rest of the previous tunnel carving logic.
-    // This section is now empty as the logic is within connectTwoRooms and the loop above.
-    
-    let startDoorPosition: {x: number, y: number} | null = null;
-    let endDoorPosition: {x: number, y: number} | null = null;
-
+    // --- Place Start and End Doors ---
     if (rooms.length > 0) {
-        // Place start door in the first room
+        // Start door in the first room
         const startRoom = rooms[0];
-        const startX = startRoom.centerX;
-        const startY = startRoom.centerY;
+        const startX = Math.floor(startRoom.x + startRoom.width / 2);
+        const startY = Math.floor(startRoom.y + startRoom.height / 2);
         grid[startY][startX] = CELL_DOOR_START;
         startDoorPosition = { x: startX, y: startY };
 
-
-        // Place end door in the last room (or a distant room)
+        // End door in the last room
         const endRoom = rooms[rooms.length - 1];
-        const endX = endRoom.centerX;
-        const endY = endRoom.centerY;
-        // Ensure end door is not same as start if only one room
-        if (rooms.length === 1 && startX === endX && startY === endY) {
-            // slightly offset if possible, or pick another spot
-            if (endX + 1 < endRoom.x + endRoom.width) grid[endY][endX+1] = CELL_DOOR_END;
-            else grid[endY][endX-1] = CELL_DOOR_END; // crude fallback
-            endDoorPosition = { x: (endX + 1 < endRoom.x + endRoom.width ? endX+1 : endX-1) , y: endY };
+        let endX = Math.floor(endRoom.x + endRoom.width / 2);
+        let endY = Math.floor(endRoom.y + endRoom.height / 2);
 
-        } else {
-             grid[endY][endX] = CELL_DOOR_END;
-             endDoorPosition = { x: endX, y: endY };
+        // Ensure end door is not the same as start door if only one room or if centers coincide
+        if (rooms.length === 1 || (startX === endX && startY === endY)) {
+            // Try to find a different spot in the same room or an adjacent path cell
+            // This is a simple fallback; could be more robust
+            if (endX + 1 < endRoom.x + endRoom.width && grid[endY][endX+1] !== CELL_MAZE_WALL) {
+                 endX = endX + 1;
+            } else if (endX - 1 >= endRoom.x && grid[endY][endX-1] !== CELL_MAZE_WALL) {
+                 endX = endX - 1;
+            } else if (endY + 1 < endRoom.y + endRoom.height && grid[endY+1][endX] !== CELL_MAZE_WALL ) {
+                 endY = endY + 1;
+            } // Add more checks or a systematic search if needed
+        }
+        grid[endY][endX] = CELL_DOOR_END;
+        endDoorPosition = { x: endX, y: endY };
+
+    } else {
+        // No rooms created, place doors on maze paths
+        startDoorPosition = { x: 1, y: 1 }; // Default start of maze
+        grid[1][1] = CELL_DOOR_START;
+
+        // Find a distant path for the end door
+        let foundEndDoor = false;
+        for (let r = height - 2; r > 0; r--) {
+            for (let c = width - 2; c > 0; c--) {
+                if (grid[r][c] === CELL_PATH && !(c === 1 && r === 1)) {
+                    grid[r][c] = CELL_DOOR_END;
+                    endDoorPosition = { x: c, y: r };
+                    foundEndDoor = true;
+                    break;
+                }
+            }
+            if (foundEndDoor) break;
+        }
+        if (!foundEndDoor) { // Fallback if no other path found (highly unlikely for a maze)
+            if(width > 3) { // ensure there's space to move
+                grid[1][3] = CELL_DOOR_END;
+                endDoorPosition = { x: 3, y: 1};
+            } else { // last resort
+                 grid[3][1] = CELL_DOOR_END;
+                 endDoorPosition = { x: 1, y: 3};
+            }
         }
     }
+    // --- End Door Placement ---
+
+    // Example: Mark center as path for now to have something to see (temporary)
+    // if (width > 2 && height > 2) {
+    //     grid[Math.floor(height/2)][Math.floor(width/2)] = CELL_PATH;
+    // }
+
 
     return { grid, rooms, startDoorPosition, endDoorPosition };
 }
@@ -210,23 +253,8 @@ export function startTestDungeon() {
     // camera.position.set(0,0.6,0); // Camera is child of controls.getObject(), its relative position is fixed.
 
     // --- Player Movement Variables ---
-    // const moveSpeed = 1.5 * CELL_SIZE; // Adjusted for CELL_SIZE, e.g., 3 units per second if CELL_SIZE is 2
-    // const playerVelocity = new THREE.Vector3();
-    // NOTE: These variables playerVelocity and keysPressed are defined later.
-    // This seems like a leftover from a merge or refactor.
-    // For now, I will focus on the ambient light adjustment.
-    // The actual moveSpeed and playerVelocity are initialized correctly further down.
-    // This section with commented out or duplicated vars should be cleaned up eventually.
-
-    // Re-finding the ambient light to adjust it:
-    // Original ambient light: const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
-    // The ambientLight was added to the scene earlier. Let's adjust its intensity.
-    // Assuming ambientLight variable is still in scope or can be retrieved.
-    // It is in scope from its definition: const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
-    ambientLight.intensity = 0.5; // Reduced from 1.5 to make torches more impactful
-
-    const moveSpeed = 1.5 * CELL_SIZE; // This is the correct initialization
-    const playerVelocity = new THREE.Vector3(); // This is the correct initialization
+    const moveSpeed = 1.5 * CELL_SIZE; // Adjusted for CELL_SIZE, e.g., 3 units per second if CELL_SIZE is 2
+    const playerVelocity = new THREE.Vector3();
     const keysPressed: { [key: string]: boolean } = {};
     const playerColliderRadius = 0.4 * CELL_SIZE; // Player's collision radius
 
@@ -292,7 +320,8 @@ export function startTestDungeon() {
     let dungeonWallMeshes: THREE.Mesh[] = []; 
     
     const dungeonData = generateDungeonData(GRID_WIDTH, GRID_HEIGHT);
-    dungeonWallMeshes = renderDungeonFromGrid(scene, dungeonData.grid, CELL_SIZE); // Capture wall meshes
+    // Pass dungeonData.rooms to the rendering function for torch placement
+    dungeonWallMeshes = renderDungeonFromGrid(scene, dungeonData.grid, CELL_SIZE, dungeonData.rooms);
 
     // Position player at start door
     if (dungeonData.startDoorPosition) {
@@ -398,137 +427,142 @@ export function startTestDungeon() {
 }
 
 // --- Dungeon Visualization ---
-// renderDungeonFromGrid now returns an array of wall meshes
-function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: number): THREE.Mesh[] {
+
+// Helper to create a torch (model + light)
+function createTorch(scene: THREE.Scene, position: THREE.Vector3, cellSize: number) {
+    const torchHeight = cellSize * 0.7;
+    const lightHeight = cellSize * 0.65;
+    const torchColor = 0xffaa33; // Warm orange
+
+    // Torch model (simple cylinder)
+    const torchModelGeometry = new THREE.CylinderGeometry(0.05 * cellSize, 0.1 * cellSize, torchHeight, 8);
+    const torchModelMaterial = new THREE.MeshStandardMaterial({ color: 0x503010 }); // Dark wood/metal
+    const torchModel = new THREE.Mesh(torchModelGeometry, torchModelMaterial);
+
+    // Flame part of the model
+    const flameGeometry = new THREE.SphereGeometry(0.1 * cellSize, 8, 8);
+    const flameMaterial = new THREE.MeshStandardMaterial({ color: torchColor, emissive: torchColor, emissiveIntensity: 2 });
+    const flameMesh = new THREE.Mesh(flameGeometry, flameMaterial);
+    flameMesh.position.y = torchHeight / 2; // Position flame at the top of cylinder
+    torchModel.add(flameMesh);
+
+    torchModel.position.copy(position);
+    torchModel.position.y = torchHeight / 2; // Base of the torch on the floor or wall mount point
+
+    // PointLight attached to the torch model (slightly above its base, near the flame)
+    const pointLight = new THREE.PointLight(torchColor, 1.2, cellSize * 3.5); // color, intensity, distance
+    pointLight.position.set(0, lightHeight - (torchHeight/2) , 0); // Relative to torchModel's center
+
+    torchModel.add(pointLight);
+    torchModel.userData.isDungeonElement = true;
+    scene.add(torchModel);
+}
+
+
+function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: number, rooms: RoomArea[]): THREE.Mesh[] {
     const wallMeshes: THREE.Mesh[] = [];
-    // Clear previous dungeon meshes if any (important for regeneration)
     const objectsToRemove = scene.children.filter(child => child.userData.isDungeonElement);
-    objectsToRemove.forEach(obj => scene.remove(obj));
-    // Note: Proper disposal of geometries and materials should be handled for long-running apps
+    objectsToRemove.forEach(obj => {
+        scene.remove(obj);
+        // Proper disposal for geometries and materials if they are not shared extensively
+        if ((obj as THREE.Mesh).geometry) (obj as THREE.Mesh).geometry.dispose();
+        if ((obj as THREE.Mesh).material) {
+            if (Array.isArray((obj as THREE.Mesh).material)) {
+                ((obj as THREE.Mesh).material as THREE.Material[]).forEach(m => m.dispose());
+            } else {
+                ((obj as THREE.Mesh).material as THREE.Material).dispose();
+            }
+        }
+    });
 
-    const wallGeometry = new THREE.BoxGeometry(cellSize, cellSize, cellSize); // Assuming walls are cubes
-    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 }); // Dark grey walls
+    const wallGeometry = new THREE.BoxGeometry(cellSize, cellSize, cellSize);
+    const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4a4a }); // Darker walls
 
-    const floorGeometry = new THREE.PlaneGeometry(cellSize, cellSize); // Default for rooms, doors
-    const tunnelFloorGeometry = new THREE.PlaneGeometry(cellSize * 0.5, cellSize); // Visually narrower tunnels (50% width)
-    const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x777777, side: THREE.DoubleSide }); // Grey floor
-    const roomFloorMaterial = new THREE.MeshStandardMaterial({ color: 0x887766, side: THREE.DoubleSide }); // Brownish room floor
-    const tunnelFloorMaterial = new THREE.MeshStandardMaterial({ color: 0x666677, side: THREE.DoubleSide }); // Bluish tunnel floor
-    const startDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, side: THREE.DoubleSide }); // Green start
-    const endDoorMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, side: THREE.DoubleSide });   // Red end
-    const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, side: THREE.DoubleSide }); // Dark grey ceiling
+    const floorPlaneGeometry = new THREE.PlaneGeometry(cellSize, cellSize);
+    const pathMaterial = new THREE.MeshStandardMaterial({ color: 0x666666, side: THREE.DoubleSide }); // Grey paths
+    const roomFloorMaterial = new THREE.MeshStandardMaterial({ color: 0x776655, side: THREE.DoubleSide }); // Brownish room floor
+    const startDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x00cc00, side: THREE.DoubleSide, emissive: 0x00cc00, emissiveIntensity: 0.5 });
+    const endDoorMaterial = new THREE.MeshStandardMaterial({ color: 0xcc0000, side: THREE.DoubleSide, emissive: 0xcc0000, emissiveIntensity: 0.5 });
 
-    // Ceiling Geometry (same as default floor)
+    const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x505050, side: THREE.DoubleSide }); // Dark grey ceiling
     const ceilingGeometry = new THREE.PlaneGeometry(cellSize, cellSize);
 
-    // Torch properties
-    const torchColor = 0xffaa33; // Warm orange
-    const torchIntensity = 0.8; // Brightness
-    const torchDistance = cellSize * 2.5; // How far the light reaches
-    const torchHeightOffset = cellSize * 0.6; // How high on the wall
-    const torchWallOffset = 0.15 * cellSize; // How far from the wall surface
-    let torchCount = 0; // For debugging or limiting
+    const doorVisualGeometry = new THREE.BoxGeometry(cellSize * 0.8, cellSize * 0.9, cellSize * 0.1); // Thin box for door visual
 
     for (let y = 0; y < grid.length; y++) {
         for (let x = 0; x < grid[y].length; x++) {
             const cellType = grid[y][x];
-            const worldX = (x - grid[y].length / 2) * cellSize + cellSize / 2; // Center cell in world space
-            const worldZ = (y - grid.length / 2) * cellSize + cellSize / 2;   // Center cell in world space
+            const worldX = (x - grid[y].length / 2) * cellSize + cellSize / 2;
+            const worldZ = (y - grid.length / 2) * cellSize + cellSize / 2;
 
-            if (cellType === CELL_WALL) {
-                const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial.clone());
+            if (cellType === CELL_MAZE_WALL) {
+                const wallMesh = new THREE.Mesh(wallGeometry, wallMaterial.clone()); // Clone if material props change per wall
                 wallMesh.position.set(worldX, cellSize / 2, worldZ);
                 wallMesh.userData.isDungeonElement = true;
                 scene.add(wallMesh);
-                wallMeshes.push(wallMesh); // Collect wall mesh
-
-                // Attempt to place torches on this wall segment
-                // Check adjacent cells to see if this wall borders a floor, indicating an interior wall
-                // Place torches somewhat randomly to avoid them being everywhere
-                // Simple check: if wall is at (x,y), check (x+1,y), (x-1,y), (x,y+1), (x,y-1) in grid
-                // Place torch if one of these is a floor and a random chance passes.
-                // This is a simplified approach; more advanced would check specific wall faces.
-
-                const neighbors = [
-                    { dx: 0, dy: 1 },  // Wall face towards Z+
-                    { dx: 0, dy: -1 }, // Wall face towards Z-
-                    { dx: 1, dy: 0 },  // Wall face towards X+
-                    { dx: -1, dy: 0 }  // Wall face towards X-
-                ];
-
-                for (const neighbor of neighbors) {
-                    const nx = x + neighbor.dx;
-                    const ny = y + neighbor.dy;
-
-                    if (nx >= 0 && nx < grid[0].length && ny >= 0 && ny < grid.length &&
-                        (grid[ny][nx] === CELL_ROOM_FLOOR || grid[ny][nx] === CELL_TUNNEL_FLOOR)) {
-
-                        // This wall borders a floor. Add a torch with some probability (e.g., 15% chance per eligible face)
-                        if (Math.random() < 0.15) {
-                            const torchLight = new THREE.PointLight(torchColor, torchIntensity, torchDistance);
-
-                            // Position the torch on the side of the wall facing the floor space
-                            // The light should be slightly away from the wall surface and at a certain height.
-                            torchLight.position.set(
-                                worldX - neighbor.dx * torchWallOffset, // Offset slightly from the wall center towards the floor
-                                torchHeightOffset,
-                                worldZ - neighbor.dy * torchWallOffset  // Offset slightly from the wall center towards the floor
-                            );
-                            torchLight.userData.isDungeonElement = true; // Mark for cleanup
-                            scene.add(torchLight);
-                            torchCount++;
-
-                            // Optional: Add a small visual mesh for the torch itself (e.g., a small cylinder or box)
-                            // const torchVisualGeometry = new THREE.CylinderGeometry(0.05 * cellSize, 0.05 * cellSize, 0.2 * cellSize, 8);
-                            // const torchVisualMaterial = new THREE.MeshBasicMaterial({ color: 0x654321 }); // Brown
-                            // const torchVisualMesh = new THREE.Mesh(torchVisualGeometry, torchVisualMaterial);
-                            // torchVisualMesh.position.copy(torchLight.position);
-                            // torchVisualMesh.position.y -= 0.05 * cellSize; // Adjust if light source is at top of torch model
-                            // scene.add(torchVisualMesh);
-                            // torchVisualMesh.userData.isDungeonElement = true;
-
-                            break; // Add only one torch per wall block for now, even if it has multiple floor neighbors
-                        }
-                    }
-                }
-            } else { // If not a wall, it's some kind of floor
-                let currentFloorMaterial = floorMaterial;
+                wallMeshes.push(wallMesh);
+            } else if (cellType === CELL_PATH || cellType === CELL_ROOM_FLOOR || cellType === CELL_DOOR_START || cellType === CELL_DOOR_END) {
+                let currentFloorMaterial = pathMaterial;
                 if (cellType === CELL_ROOM_FLOOR) currentFloorMaterial = roomFloorMaterial;
-                else if (cellType === CELL_TUNNEL_FLOOR) currentFloorMaterial = tunnelFloorMaterial;
                 else if (cellType === CELL_DOOR_START) currentFloorMaterial = startDoorMaterial;
                 else if (cellType === CELL_DOOR_END) currentFloorMaterial = endDoorMaterial;
-                // Also CELL_FLOOR would use the default floorMaterial
 
-                let currentFloorGeometry = floorGeometry;
-                if (cellType === CELL_TUNNEL_FLOOR) {
-                    currentFloorGeometry = tunnelFloorGeometry;
-                    // Future improvement: Could rotate tunnelFloorGeometry if tunnel direction is known
-                    // e.g., if horizontal tunnel, use (width, depth*0.5), if vertical (width*0.5, depth)
-                    // For now, it just makes one dimension (width) narrower.
-                }
-
-                const floorPlane = new THREE.Mesh(currentFloorGeometry, currentFloorMaterial.clone());
+                const floorPlane = new THREE.Mesh(floorPlaneGeometry, currentFloorMaterial.clone());
                 floorPlane.rotation.x = -Math.PI / 2;
-                floorPlane.position.set(worldX, 0, worldZ); // Position floor plane
+                floorPlane.position.set(worldX, 0, worldZ);
                 floorPlane.userData.isDungeonElement = true;
                 scene.add(floorPlane);
 
-                // Add ceiling plane above the floor
                 const ceilingPlane = new THREE.Mesh(ceilingGeometry, ceilingMaterial.clone());
-                ceilingPlane.rotation.x = Math.PI / 2; // Rotate to face down
-                ceilingPlane.position.set(worldX, cellSize, worldZ); // Position at top of cell
+                ceilingPlane.rotation.x = Math.PI / 2;
+                ceilingPlane.position.set(worldX, cellSize, worldZ);
                 ceilingPlane.userData.isDungeonElement = true;
                 scene.add(ceilingPlane);
+
+                // Add visual for doors
+                if (cellType === CELL_DOOR_START || cellType === CELL_DOOR_END) {
+                    const doorVisualMaterial = (cellType === CELL_DOOR_START) ? startDoorMaterial : endDoorMaterial;
+                    const doorMesh = new THREE.Mesh(doorVisualGeometry, doorVisualMaterial.clone());
+                    doorMesh.position.set(worldX, cellSize * 0.45, worldZ); // Position it standing on the floor
+                    // Potentially rotate door based on adjacent paths later
+                    doorMesh.userData.isDungeonElement = true;
+                    scene.add(doorMesh);
+                }
             }
         }
     }
-    // Remove the placeholder floor after real dungeon is rendered
+
+    // Place torches in rooms
+    rooms.forEach(room => {
+        const roomCenterX = (room.x + room.width / 2 - grid[0].length / 2) * cellSize + cellSize / 2;
+        const roomCenterZ = (room.y + room.height / 2 - grid.length / 2) * cellSize + cellSize / 2;
+        createTorch(scene, new THREE.Vector3(roomCenterX, 0, roomCenterZ), cellSize);
+    });
+
+    // Place torches at some maze junctions or long corridors (simple approach)
+    let pathCellsForTorches = 0;
+    for (let y = 1; y < grid.length - 1; y+=2) { // Iterate over potential path cells
+        for (let x = 1; x < grid[y].length - 1; x+=2) {
+            if (grid[y][x] === CELL_PATH) {
+                pathCellsForTorches++;
+                if (pathCellsForTorches % 7 === 0) { // Place a torch every 7th path cell (approx)
+                    const worldX = (x - grid[y].length / 2) * cellSize + cellSize / 2;
+                    const worldZ = (y - grid.length / 2) * cellSize + cellSize / 2;
+
+                    // Check for adjacent walls to "mount" torch visually (optional refinement)
+                    // For now, place near center of path cell, slightly offset if desired
+                    createTorch(scene, new THREE.Vector3(worldX, 0, worldZ), cellSize);
+                }
+            }
+        }
+    }
+
+
     const placeholderFloor = scene.getObjectByName("placeholderFloor");
     if (placeholderFloor) {
         scene.remove(placeholderFloor);
-        (placeholderFloor as THREE.Mesh).geometry.dispose();
-        ((placeholderFloor as THREE.Mesh).material as THREE.Material).dispose();
+        if ((placeholderFloor as THREE.Mesh).geometry) (placeholderFloor as THREE.Mesh).geometry.dispose();
+        if ((placeholderFloor as THREE.Mesh).material) ((placeholderFloor as THREE.Mesh).material as THREE.Material).dispose();
     }
-    console.log(`Added ${torchCount} torches to the dungeon.`); // Log how many torches were added
-    return wallMeshes; // Return the collected wall meshes
+    return wallMeshes;
 }
