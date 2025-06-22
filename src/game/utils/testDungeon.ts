@@ -35,8 +35,8 @@ function generateDungeonData(width: number, height: number): { grid: DungeonGrid
     const grid: DungeonGrid = Array.from({ length: height }, () => Array(width).fill(CELL_WALL));
     const rooms: Room[] = [];
     const minRoomSize = 4;
-    const maxRoomSize = 8;
-    const numRoomAttempts = 20; // Try to place this many rooms
+    const maxRoomSize = 6; // Decreased from 8
+    const numRoomAttempts = 15; // Decreased from 20 // Try to place this many rooms
 
     for (let i = 0; i < numRoomAttempts; i++) {
         const roomWidth = Math.floor(Math.random() * (maxRoomSize - minRoomSize + 1)) + minRoomSize;
@@ -75,35 +75,61 @@ function generateDungeonData(width: number, height: number): { grid: DungeonGrid
     // Connect rooms with tunnels
     for (let i = 0; i < rooms.length - 1; i++) {
         const r1 = rooms[i];
-        const r2 = rooms[i + 1]; // Connect to the next room in the list for simplicity
 
-        let curX = r1.centerX;
-        let curY = r1.centerY;
+        // Connect to the next room in the list
+        const r2_primary = rooms[i + 1];
+        connectTwoRooms(grid, r1, r2_primary);
+
+        // Chance to connect to the room after next as well, for more tunnels
+        if (i < rooms.length - 2 && Math.random() < 0.5) { // 50% chance
+            const r2_secondary = rooms[i + 2];
+            // Basic check: don't try to connect if it's the same as primary target (can happen with few rooms)
+            // A more robust check would be to see if they are already connected, but this is simpler.
+            if (r2_secondary !== r2_primary) {
+                 connectTwoRooms(grid, r1, r2_secondary);
+            }
+        }
+    }
+
+    // Helper function to carve tunnels between two rooms
+    function connectTwoRooms(grid: DungeonGrid, room1: Room, room2: Room) {
+        let curX = room1.centerX;
+        let curY = room1.centerY;
 
         // Randomly decide to go horizontal then vertical, or vice-versa
         if (Math.random() > 0.5) {
             // Horizontal then Vertical
-            while (curX !== r2.centerX) {
+            while (curX !== room2.centerX) {
                 grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curX += Math.sign(r2.centerX - curX);
+                curX += Math.sign(room2.centerX - curX);
             }
-            while (curY !== r2.centerY) {
+            while (curY !== room2.centerY) {
                 grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curY += Math.sign(r2.centerY - curY);
+                curY += Math.sign(room2.centerY - curY);
             }
         } else {
             // Vertical then Horizontal
-            while (curY !== r2.centerY) {
+            while (curY !== room2.centerY) {
                 grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curY += Math.sign(r2.centerY - curY);
+                curY += Math.sign(room2.centerY - curY);
             }
-            while (curX !== r2.centerX) {
+            while (curX !== room2.centerX) {
                 grid[curY][curX] = CELL_TUNNEL_FLOOR;
-                curX += Math.sign(r2.centerX - curX);
+                curX += Math.sign(room2.centerX - curX);
             }
         }
         grid[curY][curX] = CELL_TUNNEL_FLOOR; // Ensure endpoint of tunnel is floor
     }
+
+    // Original tunnel connection logic was here, now refactored into connectTwoRooms
+    // and called within the loop above.
+    // The loop for (let i = 0; i < rooms.length - 1; i++) now uses connectTwoRooms.
+    // The old direct implementation within that loop is replaced by calls to connectTwoRooms.
+    // For example, the following lines are now part of connectTwoRooms:
+    // let curX = r1.centerX;
+    // let curY = r1.centerY;
+    // ... and the rest of the previous tunnel carving logic.
+    // This section is now empty as the logic is within connectTwoRooms and the loop above.
     
     let startDoorPosition: {x: number, y: number} | null = null;
     let endDoorPosition: {x: number, y: number} | null = null;
@@ -184,8 +210,23 @@ export function startTestDungeon() {
     // camera.position.set(0,0.6,0); // Camera is child of controls.getObject(), its relative position is fixed.
 
     // --- Player Movement Variables ---
-    const moveSpeed = 1.5 * CELL_SIZE; // Adjusted for CELL_SIZE, e.g., 3 units per second if CELL_SIZE is 2
-    const playerVelocity = new THREE.Vector3();
+    // const moveSpeed = 1.5 * CELL_SIZE; // Adjusted for CELL_SIZE, e.g., 3 units per second if CELL_SIZE is 2
+    // const playerVelocity = new THREE.Vector3();
+    // NOTE: These variables playerVelocity and keysPressed are defined later.
+    // This seems like a leftover from a merge or refactor.
+    // For now, I will focus on the ambient light adjustment.
+    // The actual moveSpeed and playerVelocity are initialized correctly further down.
+    // This section with commented out or duplicated vars should be cleaned up eventually.
+
+    // Re-finding the ambient light to adjust it:
+    // Original ambient light: const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+    // The ambientLight was added to the scene earlier. Let's adjust its intensity.
+    // Assuming ambientLight variable is still in scope or can be retrieved.
+    // It is in scope from its definition: const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+    ambientLight.intensity = 0.5; // Reduced from 1.5 to make torches more impactful
+
+    const moveSpeed = 1.5 * CELL_SIZE; // This is the correct initialization
+    const playerVelocity = new THREE.Vector3(); // This is the correct initialization
     const keysPressed: { [key: string]: boolean } = {};
     const playerColliderRadius = 0.4 * CELL_SIZE; // Player's collision radius
 
@@ -368,12 +409,25 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
     const wallGeometry = new THREE.BoxGeometry(cellSize, cellSize, cellSize); // Assuming walls are cubes
     const wallMaterial = new THREE.MeshStandardMaterial({ color: 0x555555 }); // Dark grey walls
 
-    const floorGeometry = new THREE.PlaneGeometry(cellSize, cellSize);
+    const floorGeometry = new THREE.PlaneGeometry(cellSize, cellSize); // Default for rooms, doors
+    const tunnelFloorGeometry = new THREE.PlaneGeometry(cellSize * 0.5, cellSize); // Visually narrower tunnels (50% width)
     const floorMaterial = new THREE.MeshStandardMaterial({ color: 0x777777, side: THREE.DoubleSide }); // Grey floor
     const roomFloorMaterial = new THREE.MeshStandardMaterial({ color: 0x887766, side: THREE.DoubleSide }); // Brownish room floor
     const tunnelFloorMaterial = new THREE.MeshStandardMaterial({ color: 0x666677, side: THREE.DoubleSide }); // Bluish tunnel floor
     const startDoorMaterial = new THREE.MeshStandardMaterial({ color: 0x00ff00, side: THREE.DoubleSide }); // Green start
     const endDoorMaterial = new THREE.MeshStandardMaterial({ color: 0xff0000, side: THREE.DoubleSide });   // Red end
+    const ceilingMaterial = new THREE.MeshStandardMaterial({ color: 0x4a4a4a, side: THREE.DoubleSide }); // Dark grey ceiling
+
+    // Ceiling Geometry (same as default floor)
+    const ceilingGeometry = new THREE.PlaneGeometry(cellSize, cellSize);
+
+    // Torch properties
+    const torchColor = 0xffaa33; // Warm orange
+    const torchIntensity = 0.8; // Brightness
+    const torchDistance = cellSize * 2.5; // How far the light reaches
+    const torchHeightOffset = cellSize * 0.6; // How high on the wall
+    const torchWallOffset = 0.15 * cellSize; // How far from the wall surface
+    let torchCount = 0; // For debugging or limiting
 
     for (let y = 0; y < grid.length; y++) {
         for (let x = 0; x < grid[y].length; x++) {
@@ -387,6 +441,56 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
                 wallMesh.userData.isDungeonElement = true;
                 scene.add(wallMesh);
                 wallMeshes.push(wallMesh); // Collect wall mesh
+
+                // Attempt to place torches on this wall segment
+                // Check adjacent cells to see if this wall borders a floor, indicating an interior wall
+                // Place torches somewhat randomly to avoid them being everywhere
+                // Simple check: if wall is at (x,y), check (x+1,y), (x-1,y), (x,y+1), (x,y-1) in grid
+                // Place torch if one of these is a floor and a random chance passes.
+                // This is a simplified approach; more advanced would check specific wall faces.
+
+                const neighbors = [
+                    { dx: 0, dy: 1 },  // Wall face towards Z+
+                    { dx: 0, dy: -1 }, // Wall face towards Z-
+                    { dx: 1, dy: 0 },  // Wall face towards X+
+                    { dx: -1, dy: 0 }  // Wall face towards X-
+                ];
+
+                for (const neighbor of neighbors) {
+                    const nx = x + neighbor.dx;
+                    const ny = y + neighbor.dy;
+
+                    if (nx >= 0 && nx < grid[0].length && ny >= 0 && ny < grid.length &&
+                        (grid[ny][nx] === CELL_ROOM_FLOOR || grid[ny][nx] === CELL_TUNNEL_FLOOR)) {
+
+                        // This wall borders a floor. Add a torch with some probability (e.g., 15% chance per eligible face)
+                        if (Math.random() < 0.15) {
+                            const torchLight = new THREE.PointLight(torchColor, torchIntensity, torchDistance);
+
+                            // Position the torch on the side of the wall facing the floor space
+                            // The light should be slightly away from the wall surface and at a certain height.
+                            torchLight.position.set(
+                                worldX - neighbor.dx * torchWallOffset, // Offset slightly from the wall center towards the floor
+                                torchHeightOffset,
+                                worldZ - neighbor.dy * torchWallOffset  // Offset slightly from the wall center towards the floor
+                            );
+                            torchLight.userData.isDungeonElement = true; // Mark for cleanup
+                            scene.add(torchLight);
+                            torchCount++;
+
+                            // Optional: Add a small visual mesh for the torch itself (e.g., a small cylinder or box)
+                            // const torchVisualGeometry = new THREE.CylinderGeometry(0.05 * cellSize, 0.05 * cellSize, 0.2 * cellSize, 8);
+                            // const torchVisualMaterial = new THREE.MeshBasicMaterial({ color: 0x654321 }); // Brown
+                            // const torchVisualMesh = new THREE.Mesh(torchVisualGeometry, torchVisualMaterial);
+                            // torchVisualMesh.position.copy(torchLight.position);
+                            // torchVisualMesh.position.y -= 0.05 * cellSize; // Adjust if light source is at top of torch model
+                            // scene.add(torchVisualMesh);
+                            // torchVisualMesh.userData.isDungeonElement = true;
+
+                            break; // Add only one torch per wall block for now, even if it has multiple floor neighbors
+                        }
+                    }
+                }
             } else { // If not a wall, it's some kind of floor
                 let currentFloorMaterial = floorMaterial;
                 if (cellType === CELL_ROOM_FLOOR) currentFloorMaterial = roomFloorMaterial;
@@ -395,11 +499,26 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
                 else if (cellType === CELL_DOOR_END) currentFloorMaterial = endDoorMaterial;
                 // Also CELL_FLOOR would use the default floorMaterial
 
-                const floorPlane = new THREE.Mesh(floorGeometry, currentFloorMaterial.clone());
+                let currentFloorGeometry = floorGeometry;
+                if (cellType === CELL_TUNNEL_FLOOR) {
+                    currentFloorGeometry = tunnelFloorGeometry;
+                    // Future improvement: Could rotate tunnelFloorGeometry if tunnel direction is known
+                    // e.g., if horizontal tunnel, use (width, depth*0.5), if vertical (width*0.5, depth)
+                    // For now, it just makes one dimension (width) narrower.
+                }
+
+                const floorPlane = new THREE.Mesh(currentFloorGeometry, currentFloorMaterial.clone());
                 floorPlane.rotation.x = -Math.PI / 2;
                 floorPlane.position.set(worldX, 0, worldZ); // Position floor plane
                 floorPlane.userData.isDungeonElement = true;
                 scene.add(floorPlane);
+
+                // Add ceiling plane above the floor
+                const ceilingPlane = new THREE.Mesh(ceilingGeometry, ceilingMaterial.clone());
+                ceilingPlane.rotation.x = Math.PI / 2; // Rotate to face down
+                ceilingPlane.position.set(worldX, cellSize, worldZ); // Position at top of cell
+                ceilingPlane.userData.isDungeonElement = true;
+                scene.add(ceilingPlane);
             }
         }
     }
@@ -410,5 +529,6 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
         (placeholderFloor as THREE.Mesh).geometry.dispose();
         ((placeholderFloor as THREE.Mesh).material as THREE.Material).dispose();
     }
+    console.log(`Added ${torchCount} torches to the dungeon.`); // Log how many torches were added
     return wallMeshes; // Return the collected wall meshes
 }
