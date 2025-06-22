@@ -678,15 +678,8 @@ function renderDungeonFromGrid(scene: THREE.Scene, grid: DungeonGrid, cellSize: 
                 ceilingPlane.userData.isDungeonElement = true;
                 scene.add(ceilingPlane);
 
-                // Add visual for doors
-                if (cellType === CELL_DOOR_START || cellType === CELL_DOOR_END) {
-                    const doorVisualMaterial = (cellType === CELL_DOOR_START) ? startDoorMaterial : endDoorMaterial;
-                    const doorMesh = new THREE.Mesh(doorVisualGeometry, doorVisualMaterial.clone());
-                    doorMesh.position.set(worldX, cellSize * 0.45, worldZ); // Position it standing on the floor
-                    // Potentially rotate door based on adjacent paths later
-                    doorMesh.userData.isDungeonElement = true;
-                    scene.add(doorMesh);
-                }
+                // Visuals for doors (CELL_DOOR_START, CELL_DOOR_END) are handled in their own dedicated block earlier.
+                // No need to add door visuals here, as this block is for CELL_PATH or CELL_ROOM_FLOOR.
             }
         }
     }
