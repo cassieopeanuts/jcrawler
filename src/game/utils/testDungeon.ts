@@ -49,6 +49,8 @@ function generateDungeonData(width: number, height: number): { grid: DungeonGrid
 
     const grid: DungeonGrid = Array.from({ length: height }, () => Array(width).fill(CELL_MAZE_WALL));
     const rooms: RoomArea[] = []; // To store locations of expanded room areas
+    let startDoorPosition: {x: number, y: number} | null = null;
+    let endDoorPosition: {x: number, y: number} | null = null;
 
     // --- Recursive Backtracker Maze Algorithm ---
     const carveMaze = (cx: number, cy: number) => {
